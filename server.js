@@ -63,6 +63,8 @@ app.get("/auth/strava", (req, res) => {
   return res.redirect(url);
 });
 
+// ... всё как у вас выше
+
 /* ---------- 2) Callback: меняем code на токен, сохраняем в cookie ---------- */
 app.get("/oauth/callback", async (req, res) => {
   const code = req.query.code;
@@ -76,7 +78,7 @@ app.get("/oauth/callback", async (req, res) => {
       grant_type: "authorization_code",
     });
 
-    // Сохраняем всё нужное в подписанную httpOnly cookie
+    // то, что будем хранить
     const token = {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
@@ -84,15 +86,15 @@ app.get("/oauth/callback", async (req, res) => {
       athlete_id: data.athlete?.id,
     };
 
-    // там, где сохраняем куку "strava"
-res.cookie("strava", JSON.stringify(payload), {
-  httpOnly: true,
-  signed: true,
-  sameSite: "none",   // было "lax"
-  secure: true,       // обязателен для SameSite=None
-  maxAge: 30 * 24 * 3600 * 1000,
-});
-
+    // ✅ фикс: token (а не payload) + кросс-сайт настройки куки
+    res.cookie("strava", JSON.stringify(token), {
+      httpOnly: true,
+      signed: true,
+      sameSite: "none",
+      secure: true,
+      maxAge: 30 * 24 * 3600 * 1000,
+      path: "/",
+    });
 
     return res.send("✅ Подключение выполнено. Можно загружать тренировки.");
   } catch (e) {
@@ -109,12 +111,12 @@ async function getAccessToken(req, res) {
   let token = JSON.parse(raw);
   const now = Math.floor(Date.now() / 1000);
 
-  // ещё валиден
+  // Ещё валиден
   if (token.expires_at && token.expires_at - 60 > now) {
     return token.access_token;
   }
 
-  // обновляем
+  // Обновляем
   const { data } = await axios.post("https://www.strava.com/oauth/token", {
     client_id: STRAVA_CLIENT_ID,
     client_secret: STRAVA_CLIENT_SECRET,
@@ -129,12 +131,14 @@ async function getAccessToken(req, res) {
     athlete_id: token.athlete_id,
   };
 
+  // ✅ те же флаги для кросс-доменной куки
   res.cookie("strava", JSON.stringify(token), {
     httpOnly: true,
     signed: true,
-    sameSite: "lax",
+    sameSite: "none",
     secure: true,
     maxAge: 30 * 24 * 3600 * 1000,
+    path: "/",
   });
 
   return token.access_token;
@@ -168,7 +172,12 @@ app.get("/api/activities", async (req, res) => {
 
 /* ---------- Выход (очистка cookie) ---------- */
 app.get("/logout", (req, res) => {
-  res.clearCookie("strava");
+  res.clearCookie("strava", {
+    path: "/",
+    sameSite: "none",
+    secure: true,
+    signed: true,
+  });
   res.send("Вышли. Cookie очищена.");
 });
 
