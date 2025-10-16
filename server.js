@@ -43,13 +43,16 @@ app.get("/", (_req, res) =>
   res.send("✅ API Globalsport запущен. /auth/strava для авторизации.")
 );
 
-/* ---------- 1) Старт авторизации ---------- */
+// 1) Старт авторизации
 app.get("/auth/strava", (req, res) => {
   if (!STRAVA_CLIENT_ID || !STRAVA_REDIRECT_URI) {
-    return res
-      .status(500)
-      .send("STRAVA_CLIENT_ID/STRAVA_REDIRECT_URI не заданы в окружении");
+    return res.status(500).send("STRAVA_CLIENT_ID/STRAVA_REDIRECT_URI не заданы в окружении");
   }
+
+  // откуда нас вызвали (например, https://globalsport.kz/challenge)
+  const next = typeof req.query.next === "string" && req.query.next.startsWith("http")
+    ? req.query.next
+    : `${FRONTEND_URL}/challenge`;
 
   const scope = "read,activity:read_all";
   const url =
@@ -58,14 +61,15 @@ app.get("/auth/strava", (req, res) => {
     "&response_type=code" +
     `&redirect_uri=${encodeURIComponent(STRAVA_REDIRECT_URI)}` +
     "&approval_prompt=auto" +
-    `&scope=${encodeURIComponent(scope)}`;
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(next)}`;   // <— ВАЖНО
 
-  return res.redirect(url);
+  res.redirect(url);
 });
 
 // ... всё как у вас выше
 
-/* ---------- 2) Callback: меняем code на токен, сохраняем в cookie ---------- */
+// 2) Callback
 app.get("/oauth/callback", async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).send("❌ Нет кода авторизации (code).");
@@ -78,71 +82,40 @@ app.get("/oauth/callback", async (req, res) => {
       grant_type: "authorization_code",
     });
 
-    // то, что будем хранить
     const token = {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
-      expires_at: data.expires_at, // unix seconds
+      expires_at: data.expires_at,
       athlete_id: data.athlete?.id,
     };
 
-    // ✅ фикс: token (а не payload) + кросс-сайт настройки куки
     res.cookie("strava", JSON.stringify(token), {
       httpOnly: true,
       signed: true,
-      sameSite: "none",
-      secure: true,
+      sameSite: "None",  // для кросс-домена
+      secure: true,      // обязателен при SameSite=None
       maxAge: 30 * 24 * 3600 * 1000,
-      path: "/",
     });
 
-    return res.send("✅ Подключение выполнено. Можно загружать тренировки.");
+    // Куда вернуть пользователя
+    const next = typeof req.query.state === "string" && req.query.state.startsWith("http")
+      ? decodeURIComponent(req.query.state)
+      : `${FRONTEND_URL}/challenge`;
+
+    // Можно прокинуть флажок об успешном коннекте
+    return res.redirect(`${next}?connected=1`);
   } catch (e) {
     console.error("TOKEN EXCHANGE ERROR:", e.response?.data || e.message);
-    return res.status(500).send("❌ Ошибка обмена кода на токен");
+
+    const next = typeof req.query.state === "string" && req.query.state.startsWith("http")
+      ? decodeURIComponent(req.query.state)
+      : `${FRONTEND_URL}/challenge`;
+
+    // Вернёмся на фронт с ошибкой
+    return res.redirect(`${next}?error=strava_token`);
   }
 });
 
-/* ---------- Хелпер: дать живой access_token, при необходимости обновить ---------- */
-async function getAccessToken(req, res) {
-  const raw = req.signedCookies?.strava;
-  if (!raw) throw new Error("not_authorized");
-
-  let token = JSON.parse(raw);
-  const now = Math.floor(Date.now() / 1000);
-
-  // Ещё валиден
-  if (token.expires_at && token.expires_at - 60 > now) {
-    return token.access_token;
-  }
-
-  // Обновляем
-  const { data } = await axios.post("https://www.strava.com/oauth/token", {
-    client_id: STRAVA_CLIENT_ID,
-    client_secret: STRAVA_CLIENT_SECRET,
-    grant_type: "refresh_token",
-    refresh_token: token.refresh_token,
-  });
-
-  token = {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expires_at: data.expires_at,
-    athlete_id: token.athlete_id,
-  };
-
-  // ✅ те же флаги для кросс-доменной куки
-  res.cookie("strava", JSON.stringify(token), {
-    httpOnly: true,
-    signed: true,
-    sameSite: "none",
-    secure: true,
-    maxAge: 30 * 24 * 3600 * 1000,
-    path: "/",
-  });
-
-  return token.access_token;
-}
 
 /* ---------- 3) Загрузка активностей (пагинация по 30) ---------- */
 app.get("/api/activities", async (req, res) => {
