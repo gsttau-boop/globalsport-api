@@ -84,13 +84,15 @@ app.get("/oauth/callback", async (req, res) => {
       athlete_id: data.athlete?.id,
     };
 
-    res.cookie("strava", JSON.stringify(token), {
-      httpOnly: true,
-      signed: true,
-      sameSite: "lax",
-      secure: true,
-      maxAge: 30 * 24 * 3600 * 1000, // 30 дней
-    });
+    // там, где сохраняем куку "strava"
+res.cookie("strava", JSON.stringify(payload), {
+  httpOnly: true,
+  signed: true,
+  sameSite: "none",   // было "lax"
+  secure: true,       // обязателен для SameSite=None
+  maxAge: 30 * 24 * 3600 * 1000,
+});
+
 
     return res.send("✅ Подключение выполнено. Можно загружать тренировки.");
   } catch (e) {
