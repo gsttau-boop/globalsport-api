@@ -15,7 +15,7 @@ app.get("/", (req, res) => {
 // 🔗 Авторизация Strava
 app.get("/auth/strava", (req, res) => {
   const clientId = process.env.STRAVA_CLIENT_ID;
-  const redirectUri = process.env.STRAVA_REDIRECT_URI;
+  const redirectUri = "https://globalsport-api.onrender.com/oauth/callback";
   const scope = "read,activity:read_all";
 
   const authUrl = `https://www.strava.com/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&approval_prompt=force&scope=${scope}`;
